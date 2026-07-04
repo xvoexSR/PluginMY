@@ -25,7 +25,6 @@ public class ItemListener implements Listener {
 
     private final CustomItemsPlugin plugin;
 
-    // Кулдауны по UUID игрока
     private final Map<UUID, Long> ashCooldowns = new HashMap<>();
     private final Map<UUID, Long> flashCooldowns = new HashMap<>();
 
@@ -40,7 +39,6 @@ public class ItemListener implements Listener {
 
     @EventHandler
     public void onPlayerInteract(PlayerInteractEvent event) {
-        // Реагируем только на правый клик (по воздуху или блоку), чтобы не срабатывало дважды
         if (!(event.getAction().isRightClick())) {
             return;
         }
@@ -55,14 +53,14 @@ public class ItemListener implements Listener {
 
         if (meta.getPersistentDataContainer().has(plugin.getAshKey(), PersistentDataType.BYTE)) {
             event.setCancelled(true);
-            handleAshActivation(player);
+            handleAshActivation(player, item);
         } else if (meta.getPersistentDataContainer().has(plugin.getFlashKey(), PersistentDataType.BYTE)) {
             event.setCancelled(true);
-            handleFlashActivation(player);
+            handleFlashActivation(player, item);
         }
     }
 
-    private void handleAshActivation(Player player) {
+    private void handleAshActivation(Player player, ItemStack usedItem) {
         long now = System.currentTimeMillis();
         long lastUse = ashCooldowns.getOrDefault(player.getUniqueId(), 0L);
         long remaining = ASH_COOLDOWN_MS - (now - lastUse);
@@ -75,7 +73,7 @@ public class ItemListener implements Listener {
         ashCooldowns.put(player.getUniqueId(), now);
 
         Location center = player.getLocation();
-        for (LivingEntity entity : getNearbyPlayers(center, RADIUS)) {
+        for (LivingEntity entity : getNearbyPlayers(center, RADIUS, player)) {
             Player target = (Player) entity;
             target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 5 * 20, 0, false, true, true));
             target.addPotionEffect(new PotionEffect(PotionEffectType.HUNGER, 5 * 20, 1, false, true, true));
@@ -85,9 +83,11 @@ public class ItemListener implements Listener {
         center.getWorld().spawnParticle(Particle.SOUL, center, 60, RADIUS / 3, 1, RADIUS / 3, 0.02);
         center.getWorld().playSound(center, Sound.ENTITY_WITHER_AMBIENT, 1.0f, 0.6f);
         player.sendMessage(ChatColor.DARK_PURPLE + "Вы активировали Прах убитого!");
+
+        consumeOne(usedItem);
     }
 
-    private void handleFlashActivation(Player player) {
+    private void handleFlashActivation(Player player, ItemStack usedItem) {
         long now = System.currentTimeMillis();
         long lastUse = flashCooldowns.getOrDefault(player.getUniqueId(), 0L);
         long remaining = FLASH_COOLDOWN_MS - (now - lastUse);
@@ -98,9 +98,8 @@ public class ItemListener implements Listener {
         }
 
         flashCooldowns.put(player.getUniqueId(), now);
-
         Location center = player.getLocation();
-        for (LivingEntity entity : getNearbyPlayers(center, RADIUS)) {
+        for (LivingEntity entity : getNearbyPlayers(center, RADIUS, player)) {
             Player target = (Player) entity;
             target.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 30 * 20, 0, false, true, true));
             target.addPotionEffect(new PotionEffect(PotionEffectType.WEAKNESS, 3 * 20, 0, false, true, true));
@@ -110,14 +109,23 @@ public class ItemListener implements Listener {
         center.getWorld().spawnParticle(Particle.END_ROD, center, 80, RADIUS / 3, 1, RADIUS / 3, 0.05);
         center.getWorld().playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 1.8f);
         player.sendMessage(ChatColor.YELLOW + "Вы активировали Вспышку света!");
+
+        consumeOne(usedItem);
     }
 
-    /** Находит всех игроков-LivingEntity в радиусе от точки (включая активировавшего). */
-    private java.util.List<LivingEntity> getNearbyPlayers(Location center, double radius) {
+    private void consumeOne(ItemStack item) {
+        if (item.getAmount() <= 1) {
+            item.setAmount(0);
+        } else {
+            item.setAmount(item.getAmount() - 1);
+        }
+    }
+
+    private java.util.List<LivingEntity> getNearbyPlayers(Location center, double radius, Player excluded) {
         java.util.List<LivingEntity> result = new java.util.ArrayList<>();
         for (org.bukkit.entity.Entity nearby : center.getWorld().getNearbyEntities(center, radius, radius, radius)) {
-            if (nearby instanceof Player) {
-                result.add((LivingEntity) nearby);
+            if (nearby instanceof Player player && !player.getUniqueId().equals(excluded.getUniqueId())) {
+                result.add(player);
             }
         }
         return result;
@@ -127,15 +135,10 @@ public class ItemListener implements Listener {
         return String.valueOf((millis / 1000) + 1);
     }
 
-    /**
-     * Иммунитет к яду: если у игрока где-либо в инвентаре лежит предмет "Иммунитет",
-     * эффект отравления не накладывается, а предмет теряет прочность.
-     * При достижении максимальной прочности предмет ломается (удаляется).
-     */
     @EventHandler
     public void onPotionEffect(EntityPotionEffectEvent event) {
         if (event.getNewEffect() == null) {
-            return; // эффект снимается, а не накладывается - пропускаем
+            return;
         }
         if (event.getNewEffect().getType() != PotionEffectType.POISON) {
             return;
@@ -149,17 +152,14 @@ public class ItemListener implements Listener {
             return;
         }
 
-        // Блокируем отравление
         event.setCancelled(true);
 
-        // Наносим урон по прочности предмета
         ItemMeta meta = immunityItem.getItemMeta();
         if (meta instanceof Damageable damageable) {
-            int newDamage = damageable.getDamage() + 25; // сколько "прочности" теряется за одно срабатывание
+            int newDamage = damageable.getDamage() + 5;
             int maxDurability = immunityItem.getType().getMaxDurability();
 
             if (newDamage >= maxDurability) {
-                // Предмет ломается - удаляем 1 штуку из стака
                 immunityItem.setAmount(immunityItem.getAmount() - 1);
                 player.getWorld().playSound(player.getLocation(), Sound.ENTITY_ITEM_BREAK, 1.0f, 1.0f);
                 player.sendMessage(ChatColor.RED + "Ваш предмет Иммунитет сломался, поглотив отравление!");
@@ -171,7 +171,6 @@ public class ItemListener implements Listener {
         }
     }
 
-    /** Ищет предмет с меткой "Иммунитет" в любом слоте инвентаря игрока (включая броню и офхенд). */
     private ItemStack findImmunityItem(Player player) {
         for (ItemStack stack : player.getInventory().getContents()) {
             if (stack == null || !stack.hasItemMeta()) {
