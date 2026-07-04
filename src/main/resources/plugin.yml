@@ -1,0 +1,18 @@
+name: CustomItemsPlugin
+version: '1.0.0'
+main: ru.plugin.customitems.CustomItemsPlugin
+api-version: '1.21'
+author: Claude
+description: Плагин с тремя кастомными предметами - Прах убитого, Вспышка света, Иммунитет
+
+commands:
+  customitem:
+    description: Выдать кастомный предмет
+    usage: /customitem <ash|flash|immunity> [ник игрока]
+    permission: customitems.give
+    aliases: [ci, citem]
+
+permissions:
+  customitems.give:
+    description: Позволяет выдавать кастомные предметы
+    default: op
